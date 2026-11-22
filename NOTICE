@@ -1,0 +1,7 @@
+Zntil — Apache License 2.0
+
+Includes libinjection, copyright its upstream contributors, under its BSD license.
+See vendor/libinjection/COPYING and UPSTREAM.json for the exact source revision
+and SHA-256 checksums. These sources are compiled locally; builds do not clone code.
+
+Other dependencies retain their respective licenses. Pingora is Apache-2.0.

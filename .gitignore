@@ -1,0 +1,14 @@
+/target/
+__pycache__/
+*.pem
+*.key
+*.crt
+config/crawlers.json
+.env
+
+.DS_Store
+DEPLOYMENT.json
+VALIDATION.json
+config/*.railway.toml
+config/railway.local.toml
+/data/

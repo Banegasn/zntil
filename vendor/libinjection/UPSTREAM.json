@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/libinjection/libinjection",
+  "commit": "95f6df254b9157779f48109433312aa5f8e4575a",
+  "sha256": {
+    "libinjection.h": "c5c67b4c00e0f39dc7fc4b735d436fcf488d4a6da6cf686bf1e84bb1fdb307fb",
+    "libinjection_error.h": "7a9b932aa389d9234da698805a3ae8b4e6ff6fe60c20cf451738fb62058ebd21",
+    "libinjection_html5.c": "47d74c16cf96a0a38ba4ca200e1f3a9893d09fa42a7a3c82bc07e796dd7e1235",
+    "libinjection_html5.h": "7c0c79c5198613d12aab32e057343c9763c3103034e3a8b5e5ba6527d8f6498a",
+    "libinjection_sqli.c": "d0697a3558bbb2f2a90dc332b57aa31747d4c1a4c050705956e7a7c7c11ff3fe",
+    "libinjection_sqli.h": "b38cac094e537be22acba3bcbc4eac41c85ae20dd2fd6db8e2737134c9c73722",
+    "libinjection_sqli_data.h": "07974df2c151ae82ac7fc6ec74d33b52965f2a224f9b52ad90c3727e0f54caaf",
+    "libinjection_xss.c": "2fe72c4de3562eaee4f4617046729abc421e3538a5d6fbfd5f694cdb24c4e1df",
+    "libinjection_xss.h": "8e51bfa2c8dc6e4d0265616db037cc83900889451d29af93d935882b337d2717",
+    "COPYING": "0f99a954c6c009245b50c8fbd64de90b8667350df40a72a0f2b2843a521d24c9"
+  }
+}

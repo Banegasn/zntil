@@ -1,0 +1,13 @@
+listen = "127.0.0.1:8080"
+mode = "enforce"
+threads = 1
+
+[[routes]]
+hosts = ["localhost", "app.test"]
+upstream = "127.0.0.1"
+upstream_port = 9000
+
+[[routes]]
+hosts = ["api.test"]
+upstream = "127.0.0.1"
+upstream_port = 9001

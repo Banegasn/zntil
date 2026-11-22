@@ -1,0 +1,16 @@
+# Replace the public domain and private origin before your first deployment.
+listen = "0.0.0.0:8080"
+mode = "enforce"
+threads = 1
+trust_railway_edge = true
+admin_host = "gateway.example.com"
+admin_token_env = "ZNTIL_ADMIN_TOKEN"
+admin_data_dir = "/data"
+
+[[routes]]
+hosts = ["app.example.com"]
+upstream = "app.railway.internal"
+upstream_port = 8080
+upstream_host = "app.example.com"
+forwarded_host = "app.example.com"
+public_scheme = "https"

@@ -1,0 +1,8 @@
+target
+.git
+tests
+*.pem
+*.key
+*.crt
+.env
+config/crawlers.json

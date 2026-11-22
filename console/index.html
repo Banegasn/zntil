@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Private gateway operations and routing console"
+    />
+    <title>Zntil Console</title>
+    <link rel="stylesheet" href="/_zntil/console/styles.css" />
+    <script src="/_zntil/console/app.js" defer></script>
+  </head>
+  <body>
+    <div id="boot" class="boot">
+      <span class="brand-mark" aria-hidden="true">Z</span>
+      <p>Connecting to your gateway…</p>
+    </div>
+    <main id="login" class="login-screen" hidden>
+      <section class="login-card" aria-labelledby="login-title">
+        <div class="eyebrow">
+          <span class="brand-mark" aria-hidden="true">Z</span> PRIVATE CONTROL
+          PLANE
+        </div>
+        <h1 id="login-title">
+          Your gateway.<br /><span class="accent">Under control.</span>
+        </h1>
+        <p class="muted">
+          Monitor traffic, inspect decisions and manage the routes in front of
+          your applications.
+        </p>
+        <form id="login-form">
+          <label for="access-key">Admin access key</label>
+          <input
+            id="access-key"
+            type="password"
+            required
+            autocomplete="current-password"
+            spellcheck="false"
+            placeholder="Enter your access key"
+          />
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="login-submit" class="button primary wide" type="submit">
+            Open console
+          </button>
+        </form>
+        <p class="login-foot">
+          Your key is exchanged for a private session. It is never saved in
+          browser storage.
+        </p>
+      </section>
+      <div class="login-decoration" aria-hidden="true">
+        <div class="orbit orbit-one"></div>
+        <div class="orbit orbit-two"></div>
+        <div class="orbit orbit-three"></div>
+        <span>Zntil<br />Console</span>
+      </div>
+    </main>
+    <div id="app" class="app-shell" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="/console/"
+          ><span class="brand-mark" aria-hidden="true">Z</span
+          ><span>Zntil<span class="brand-sub">CONSOLE</span></span></a
+        >
+        <div class="nav-label">WORKSPACE</div>
+        <nav aria-label="Console sections">
+          <button class="nav-item active" data-view="overview">
+            <span class="nav-icon" aria-hidden="true">◫</span>Overview
+          </button>
+          <button class="nav-item" data-view="activity">
+            <span class="nav-icon" aria-hidden="true">≋</span>Activity
+          </button>
+          <button class="nav-item" data-view="servers">
+            <span class="nav-icon" aria-hidden="true">▤</span>Servers
+          </button>
+          <button class="nav-item" data-view="proxies">
+            <span class="nav-icon" aria-hidden="true">◇</span>Proxies &amp;
+            domains
+          </button>
+          <button class="nav-item" data-view="history">
+            <span class="nav-icon" aria-hidden="true">◷</span>History
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="private-label">
+            <span class="small-shield" aria-hidden="true">◆</span>Private
+            management
+          </div>
+          <p>Changes stay in your gateway.<br />Traffic data stays minimal.</p>
+          <button id="logout" class="button quiet wide">Sign out</button>
+        </div>
+      </aside>
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <span class="topbar-kicker">OPERATIONS</span
+            ><span id="breadcrumb">Overview</span>
+          </div>
+          <div class="topbar-right">
+            <span id="mode-badge" class="badge">Loading</span
+            ><span id="connection" class="connection">Connecting</span
+            ><button
+              id="refresh"
+              class="icon-button"
+              aria-label="Refresh live data"
+              title="Refresh live data"
+            >
+              ↻
+            </button>
+          </div>
+        </header>
+        <div class="workspace-body">
+          <div id="banner" class="notice" role="status" hidden></div>
+          <div id="draft-bar" class="draft-bar" hidden>
+            <div>
+              <strong>Unapplied changes</strong
+              ><span>Your draft is separate from live traffic.</span>
+            </div>
+            <div class="actions">
+              <button id="discard" class="button quiet">Discard</button
+              ><button id="validate" class="button secondary">Validate</button
+              ><button id="save" class="button primary">Apply changes</button>
+            </div>
+          </div>
+          <main id="content" tabindex="-1"></main>
+          <footer class="workspace-footer">
+            <span>Zntil Console</span
+            ><span id="revision-label">Configuration loading</span>
+          </footer>
+        </div>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <dialog
+      id="server-dialog"
+      class="editor-dialog"
+      aria-labelledby="server-title"
+    >
+      <form id="server-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">UPSTREAM</p>
+            <h2 id="server-title">Add server</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button close-dialog"
+            aria-label="Close server editor"
+          >
+            ×
+          </button>
+        </div>
+        <div class="form-grid">
+          <div class="field full">
+            <label for="server-name">Server name</label
+            ><input
+              id="server-name"
+              required
+              maxlength="80"
+              placeholder="Production API"
+            />
+          </div>
+          <div class="field">
+            <label for="server-host">Upstream hostname</label
+            ><input
+              id="server-host"
+              required
+              spellcheck="false"
+              placeholder="api.railway.internal"
+            /><span class="field-help"
+              >A hostname or IPv4 address, without a URL path.</span
+            >
+          </div>
+          <div class="field">
+            <label for="server-port">Port</label
+            ><input
+              id="server-port"
+              required
+              type="number"
+              min="1"
+              max="65535"
+              value="8080"
+            />
+          </div>
+          <div class="field full">
+            <label class="check-label"
+              ><input id="server-tls" type="checkbox" /><span
+                >Connect to this server using HTTPS</span
+              ></label
+            ><span class="field-help"
+              >Use HTTPS for public origins. Private Railway services can use
+              their internal HTTP port.</span
+            >
+          </div>
+          <div class="field full">
+            <label for="server-origin-token"
+              >Origin token environment variable
+              <span class="optional">optional</span></label
+            ><input
+              id="server-origin-token"
+              spellcheck="false"
+              placeholder="API_ORIGIN_TOKEN"
+            /><span class="field-help"
+              >The name of a secret configured on the gateway. The secret value
+              is never displayed here.</span
+            >
+          </div>
+        </div>
+        <p id="server-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-footer">
+          <button type="button" class="button quiet close-dialog">Cancel</button
+          ><button type="submit" class="button primary">Save to draft</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog
+      id="proxy-dialog"
+      class="editor-dialog large-dialog"
+      aria-labelledby="proxy-title"
+    >
+      <form id="proxy-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">ROUTING &amp; POLICY</p>
+            <h2 id="proxy-title">Add proxy</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button close-dialog"
+            aria-label="Close proxy editor"
+          >
+            ×
+          </button>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="proxy-name">Proxy name</label
+            ><input
+              id="proxy-name"
+              required
+              maxlength="80"
+              placeholder="Main website"
+            />
+          </div>
+          <div class="field">
+            <label for="proxy-server">Upstream server</label
+            ><select id="proxy-server" required></select>
+          </div>
+          <div class="field full">
+            <label for="proxy-domains">Domains</label
+            ><textarea
+              id="proxy-domains"
+              required
+              rows="3"
+              spellcheck="false"
+              placeholder="example.com&#10;www.example.com"
+            ></textarea
+            ><span class="field-help"
+              >One hostname per line, or separated by commas. DNS and Railway
+              domain/HTTPS attachment must also be configured.</span
+            >
+          </div>
+          <div class="field full">
+            <label class="check-label"
+              ><input id="proxy-enabled" type="checkbox" checked /><span
+                >Proxy enabled</span
+              ></label
+            >
+          </div>
+          <div class="field">
+            <label for="proxy-rate">Requests per second, per client</label
+            ><input
+              id="proxy-rate"
+              type="number"
+              min="0.001"
+              step="any"
+              required
+              value="10"
+            />
+          </div>
+          <div class="field">
+            <label for="proxy-burst">Client burst allowance</label
+            ><input
+              id="proxy-burst"
+              type="number"
+              min="1"
+              step="any"
+              required
+              value="100"
+            />
+          </div>
+          <div class="field">
+            <label for="proxy-global-rate">Total requests per second</label
+            ><input
+              id="proxy-global-rate"
+              type="number"
+              min="0.001"
+              step="any"
+              required
+              value="200"
+            />
+          </div>
+          <div class="field">
+            <label for="proxy-global-burst">Total burst allowance</label
+            ><input
+              id="proxy-global-burst"
+              type="number"
+              min="1"
+              step="any"
+              required
+              value="400"
+            />
+          </div>
+        </div>
+        <details class="advanced-settings">
+          <summary>Origin settings and inspection policy</summary>
+          <div class="form-grid">
+            <div class="field">
+              <label for="proxy-upstream-host"
+                >Upstream Host header
+                <span class="optional">optional</span></label
+              ><input
+                id="proxy-upstream-host"
+                spellcheck="false"
+                placeholder="example.com"
+              />
+            </div>
+            <div class="field">
+              <label for="proxy-forwarded-host"
+                >Canonical forwarded host
+                <span class="optional">optional</span></label
+              ><input
+                id="proxy-forwarded-host"
+                spellcheck="false"
+                placeholder="example.com"
+              />
+            </div>
+            <div class="field">
+              <label for="proxy-scheme">Public scheme</label
+              ><select id="proxy-scheme">
+                <option value="">Detect automatically</option>
+                <option value="https">HTTPS</option>
+                <option value="http">HTTP</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="proxy-timeout">Upstream timeout, seconds</label
+              ><input
+                id="proxy-timeout"
+                type="number"
+                min="1"
+                max="3600"
+                required
+                value="60"
+              />
+            </div>
+            <div class="field full">
+              <label for="proxy-sensitive">Sensitive path prefixes</label
+              ><textarea
+                id="proxy-sensitive"
+                rows="2"
+                spellcheck="false"
+                placeholder="/login&#10;/admin"
+              ></textarea
+              ><span class="field-help"
+                >These paths receive the route's stricter sensitive-request
+                budget.</span
+              >
+            </div>
+            <div class="field full">
+              <label for="proxy-exemptions">Body inspection exceptions</label
+              ><textarea
+                id="proxy-exemptions"
+                rows="2"
+                spellcheck="false"
+                placeholder="/api/items&#10;/api/billing/webhook"
+              ></textarea
+              ><span class="field-help"
+                >For arbitrary shared content or signed webhooks. Resource
+                limits still apply; request bodies are streamed unchanged.</span
+              >
+            </div>
+          </div>
+        </details>
+        <p id="proxy-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-footer">
+          <button type="button" class="button quiet close-dialog">Cancel</button
+          ><button type="submit" class="button primary">Save to draft</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog
+      id="confirm-dialog"
+      class="confirm-dialog"
+      aria-labelledby="confirm-title"
+    >
+      <form method="dialog">
+        <p class="eyebrow">CONFIRM CHANGE</p>
+        <h2 id="confirm-title">Confirm</h2>
+        <p id="confirm-body" class="muted"></p>
+        <div class="dialog-footer">
+          <button class="button quiet" value="cancel">Cancel</button
+          ><button id="confirm-submit" class="button danger" value="confirm">
+            Confirm
+          </button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
