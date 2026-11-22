@@ -19,6 +19,7 @@ class Element {
     this.children = nodes;
   }
   addEventListener() {}
+  showModal() {}
 }
 const snapshot = {
   revision: 1,
@@ -53,8 +54,9 @@ async function boot(fetch) {
     document,
     Node: Element,
     structuredClone,
+    URLSearchParams,
     fetch,
-    window: { addEventListener() {} },
+    window: { location: { search: "" }, addEventListener() {} },
     setInterval() {},
   });
   vm.runInContext(source, ctx);
@@ -94,4 +96,14 @@ test("polling preserves an unapplied draft", async () => {
   vm.runInContext('dirty().servers.push({id:"draft-server"});', ctx);
   await vm.runInContext("refresh()", ctx);
   assert.equal(vm.runInContext("draft.servers[0].id", ctx), "draft-server");
+});
+
+test("a modal edit keeps the revision from before another writer's update", async () => {
+  let current = structuredClone(snapshot);
+  const { ctx } = await boot(async () => response(200, current));
+  vm.runInContext("serverEditor()", ctx);
+  current.revision = 2;
+  await vm.runInContext("refresh()", ctx);
+  assert.equal(vm.runInContext("state.revision", ctx), 2);
+  assert.equal(vm.runInContext("editorDraft().revision", ctx), 1);
 });

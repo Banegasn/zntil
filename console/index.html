@@ -81,6 +81,9 @@
           <button class="nav-item" data-view="history">
             <span class="nav-icon" aria-hidden="true">◷</span>History
           </button>
+          <button class="nav-item" data-view="access">
+            <span class="nav-icon" aria-hidden="true">⌘</span>CLI access
+          </button>
         </nav>
         <div class="sidebar-bottom">
           <div class="private-label">
@@ -366,6 +369,20 @@
               ><span class="field-help"
                 >These paths receive the route's stricter sensitive-request
                 budget.</span
+              >
+            </div>
+            <div class="field full">
+              <label for="proxy-rules">Custom rules (JSON)</label
+              ><textarea
+                id="proxy-rules"
+                rows="8"
+                spellcheck="false"
+                placeholder="[]"
+              ></textarea
+              ><span class="field-help"
+                >Block or rate-limit by domain, exact path or path prefix, HTTP
+                method and client CIDR. All matching rules apply; rules do not
+                bypass the built-in checks. CLI: zntilctl rules --help.</span
               >
             </div>
             <div class="field full">

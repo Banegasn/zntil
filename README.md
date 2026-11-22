@@ -6,7 +6,7 @@ Zntil (pronounced “zentil”) is a small, self-hosted Rust reverse proxy that 
 traffic, filters common attacks and puts explicit limits in front of your apps.
 It includes an authenticated management console in the same binary.
 
-[Website](https://zntil.tivq.link/) · [Console sign-in](https://zntil.tivq.link/console/) · [License](LICENSE)
+[Website](https://zntil.tivq.link/) · [Console sign-in](https://zntil.tivq.link/console/) · [Agent CLI](docs/agents.md) · [License](LICENSE)
 
 The hosted console manages its owner's gateway; it is not a public demo or a
 shared proxy service. Deploy your own instance to manage your applications.
@@ -48,6 +48,21 @@ require an origin token on public upstreams to prevent direct bypass.
   optimistic revision checks and rollback to retained configurations.
 - Persistent configuration and up to 20 previous revisions in a local file.
   No Redis, database, Node runtime or external frontend dependencies at runtime.
+
+## Agent CLI
+
+```sh
+cargo install --git https://github.com/Banegasn/zntil --locked --features cli --bin zntilctl
+zntilctl --gateway https://zntil.tivq.link auth login --name "My agent"
+zntilctl status
+```
+
+Approve the code in the web console under **CLI access**. Agents receive separate,
+revocable 30-day read-only or write credentials; they do not receive the master
+admin key. The CLI can manage servers, proxies, domains and custom block/rate
+rules by domain, path, HTTP method and client network. It supports JSON output,
+configuration export/apply, dry runs and revision conflicts.
+See the [agent setup and rule reference](docs/agents.md) for examples and limits.
 
 ## Quick start
 
@@ -183,7 +198,7 @@ The proxy does not replay requests automatically after upstream failure.
 
 Global settings and enforcement mode require a restart/redeployment. The console
 edits per-proxy rates, domains, server settings, sensitive-path prefixes, body
-exceptions and upstream timeout. Additional serialized route fields can be
+exceptions and upstream timeout, plus custom rule arrays in the advanced editor. Additional serialized route fields can be
 changed through the authenticated API.
 
 ## Client identity, crawlers and origin protection
@@ -210,7 +225,7 @@ sampled activity events in memory. One in twenty ordinary completed requests is
 sampled, together with exceptional decisions. Events include time, hostname,
 method, status, reason and duration; they omit raw client IPs, user agents, URLs,
 query strings, bodies, cookies and credentials. Console polling is excluded.
-Restart resets telemetry. CDN cache hits bypass this process and are absent.
+Matched custom rule IDs are also recorded. Restart resets telemetry. CDN cache hits bypass this process and are absent.
 
 Responses carry `X-Protection: active` when generated/processed by Zntil's hooks.
 Some framework-level errors may omit it. Headers injected by an outer hosting
@@ -221,7 +236,9 @@ proof that a request received every possible security check.
 endpoint at `/_rustgate/diagnostics` via `X-Rustgate-Diagnostics-Token`. Keep the
 key private. `RUSTGATE_CONFIG`, old `/_rustgate/console/` links on the management
 host and `/_rustgate/health` remain compatibility aliases during the rename.
-The current console uses `/_zntil/admin/` and its own cookie path.
+The current console uses `/_zntil/admin/` and its own cookie path. CLI credentials
+are stored as hashes in a separate persistent credential file and are revoked
+durably on master-key rotation.
 
 ## Management API
 
@@ -247,10 +264,11 @@ and bounded login attempts/sessions. The console does not expose secret values.
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-cargo build --release --locked
+cargo test --all-features --locked
+cargo build --release --features cli --locked
 python3 tests/integration.py
 python3 tests/management.py
+python3 tests/cli.py
 node --test tests/console.test.cjs
 ```
 

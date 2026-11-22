@@ -1,13 +1,24 @@
 [package]
 name = "zntil"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+default-run = "zntil"
 license = "Apache-2.0"
 description = "A small self-hosted Rust gateway with traffic filtering and a live management console"
 homepage = "https://zntil.tivq.link"
 repository = "https://github.com/Banegasn/zntil"
 
+[features]
+cli = ["dep:clap", "dep:reqwest"]
+
+[[bin]]
+name = "zntilctl"
+path = "src/bin/zntilctl.rs"
+required-features = ["cli"]
+
 [dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 async-trait = "0.1"
 arc-swap = "1"
 blake2 = "0.10"

@@ -3,8 +3,11 @@ const $ = (id) => document.getElementById(id),
   copy = (v) => structuredClone(v);
 let state,
   draft,
-  view = "overview",
+  view = new URLSearchParams(window.location.search).has("device")
+    ? "access"
+    : "overview",
   editing = null,
+  editorBase = null,
   busy = false;
 function el(tag, text, cls) {
   const n = document.createElement(tag);
@@ -128,6 +131,7 @@ function render() {
     servers: "Servers",
     proxies: "Proxies & domains",
     history: "History",
+    access: "CLI access",
   }[view];
   $("mode-badge").textContent = state.mode;
   $("revision-label").textContent =
@@ -139,6 +143,97 @@ function render() {
   document
     .querySelectorAll("[data-view]")
     .forEach((n) => n.classList.toggle("active", n.dataset.view === view));
+  if (view === "access") {
+    section(
+      "Connect your CLI",
+      "Approve only sign-ins you started. Match the code shown in your terminal. CLI credentials expire after 30 days and can be revoked here.",
+    );
+    const requested = new URLSearchParams(window.location.search).get("device");
+    if (requested) {
+      const p = panel("Requested sign-in code");
+      p.append(el("p", requested));
+    }
+    const pending = panel("Pending sign-ins"),
+      tokens = panel("Authorized CLIs");
+    pending.append(el("p", "Loading sign-ins…", "muted"));
+    tokens.append(el("p", "Loading credentials…", "muted"));
+    Promise.all([api("devices"), api("tokens")])
+      .then(([devices, credentials]) => {
+        if (view !== "access" || !pending.isConnected) return;
+        pending.replaceChildren(el("h2", "Pending sign-ins"));
+        tokens.replaceChildren(el("h2", "Authorized CLIs"));
+        const requests = devices.pending.filter(
+          (p) => !p.approved && !p.denied,
+        );
+        if (!requests.length)
+          pending.append(el("p", "No sign-ins awaiting approval.", "muted"));
+        else
+          pending.append(
+            table(
+              ["Code", "CLI name", "Permission", "Actions"],
+              requests.map((p) => {
+                const actions = el("div", undefined, "actions");
+                for (const [label, approve] of [
+                  [
+                    p.scope === "write"
+                      ? "Approve write access"
+                      : "Approve read access",
+                    true,
+                  ],
+                  ["Deny", false],
+                ])
+                  actions.append(
+                    button(label, async () => {
+                      if (
+                        approve &&
+                        !confirm(
+                          `Approve ${p.name} with ${p.scope} access? Code: ${p.user_code}. Write access can redirect traffic and edit security rules.`,
+                        )
+                      )
+                        return;
+                      try {
+                        await api("device/approve", "POST", {
+                          user_code: p.user_code,
+                          approve,
+                        });
+                        notice(
+                          approve
+                            ? "CLI approved. Return to your terminal."
+                            : "Sign-in denied.",
+                        );
+                        render();
+                      } catch (e) {
+                        notice(e.message);
+                      }
+                    }),
+                  );
+                return [p.user_code, p.name, p.scope, actions];
+              }),
+            ),
+          );
+        tokens.append(
+          table(
+            ["Name", "Permission", "Expires", "Action"],
+            credentials.tokens.map((t) => [
+              t.name,
+              t.scope,
+              timestamp(t.expires_at),
+              button("Revoke", async () => {
+                if (!confirm(`Revoke CLI access for ${t.name}?`)) return;
+                try {
+                  await api("tokens/revoke", "POST", { token_id: t.id });
+                  notice("CLI credential revoked.");
+                  render();
+                } catch (e) {
+                  notice(e.message);
+                }
+              }),
+            ]),
+          ),
+        );
+      })
+      .catch((e) => notice(e.message));
+  }
   if (view === "overview") {
     section(
       "Your traffic, in focus.",
@@ -190,7 +285,16 @@ function render() {
     );
     panel("Activity").append(
       table(
-        ["Time", "Domain", "Method", "Status", "Decision", "Reason", "Latency"],
+        [
+          "Time",
+          "Domain",
+          "Method",
+          "Status",
+          "Decision",
+          "Reason",
+          "Rule",
+          "Latency",
+        ],
         state.events.map((e) => [
           timestamp(e.time),
           e.host,
@@ -198,6 +302,7 @@ function render() {
           e.status,
           e.outcome,
           e.reason,
+          e.rule_id || "—",
           e.latency_ms + " ms",
         ]),
       ),
@@ -313,7 +418,27 @@ function render() {
     );
   }
 }
+function beginEditor() {
+  editorBase = copy(
+    draft || {
+      revision: state.revision,
+      servers: state.servers,
+      proxies: state.proxies,
+    },
+  );
+}
+function editorDraft() {
+  if (!draft)
+    draft = editorBase || {
+      revision: state.revision,
+      servers: copy(state.servers),
+      proxies: copy(state.proxies),
+    };
+  editorBase = null;
+  return draft;
+}
 function serverEditor(s) {
+  beginEditor();
   editing = s?.id || null;
   $("server-title").textContent = s ? "Edit server" : "Add server";
   for (const [id, v] of [
@@ -339,6 +464,7 @@ const fields = {
   "proxy-global-burst": "global_burst",
 };
 const defaults = {
+  rules: [],
   hosts: [],
   upstream: "placeholder",
   upstream_port: 8080,
@@ -368,6 +494,7 @@ const defaults = {
   upstream_timeout_seconds: 60,
 };
 function proxyEditor(p) {
+  beginEditor();
   editing = p?.id || null;
   const r = p?.route || defaults;
   $("proxy-title").textContent = p ? "Edit proxy" : "Add proxy";
@@ -385,6 +512,7 @@ function proxyEditor(p) {
   $("proxy-domains").value = r.hosts.join("\n");
   $("proxy-sensitive").value = r.sensitive_prefixes.join("\n");
   $("proxy-exemptions").value = r.body_inspection_exempt_prefixes.join("\n");
+  $("proxy-rules").value = JSON.stringify(r.rules || [], null, 2);
   $("proxy-error").hidden = true;
   $("proxy-dialog").showModal();
 }
@@ -395,7 +523,7 @@ const lines = (id) =>
     .filter(Boolean);
 $("server-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  const d = dirty();
+  const d = editorDraft();
   const s = {
     id: editing || "server-" + crypto.randomUUID(),
     name: $("server-name").value.trim(),
@@ -412,7 +540,18 @@ $("server-form").addEventListener("submit", (e) => {
 });
 $("proxy-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  const d = dirty();
+  let customRules;
+  try {
+    customRules = JSON.parse($("proxy-rules").value || "[]");
+    if (!Array.isArray(customRules))
+      throw Error("Custom rules must be a JSON array.");
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+    $("proxy-error").hidden = false;
+    return;
+  }
+
+  const d = editorDraft();
   const old = d.proxies.find((x) => x.id === editing);
   const route = copy(old?.route || defaults);
   for (const [id, key] of Object.entries(fields)) {
@@ -425,6 +564,7 @@ $("proxy-form").addEventListener("submit", (e) => {
   route.hosts = lines("proxy-domains").map((h) => h.toLowerCase());
   route.sensitive_prefixes = lines("proxy-sensitive");
   route.body_inspection_exempt_prefixes = lines("proxy-exemptions");
+  route.rules = customRules;
   const p = {
     id: editing || "proxy-" + crypto.randomUUID(),
     name: $("proxy-name").value.trim(),

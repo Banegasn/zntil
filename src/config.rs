@@ -84,6 +84,7 @@ impl Default for Config {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Route {
+    pub rules: Vec<crate::rules::Rule>,
     pub hosts: Vec<String>,
     pub upstream: String,
     pub upstream_port: u16,
@@ -108,6 +109,7 @@ pub struct Route {
 impl Default for Route {
     fn default() -> Self {
         Self {
+            rules: vec![],
             hosts: vec![],
             upstream: String::new(),
             upstream_port: 8080,
@@ -223,6 +225,7 @@ impl Config {
         }
         let mut hosts = HashSet::new();
         for r in &self.routes {
+            crate::rules::validate(r)?;
             if hostname(&r.upstream).as_deref() != Some(r.upstream.as_str())
                 || r.upstream_port == 0
                 || r.hosts.is_empty()
@@ -307,10 +310,7 @@ mod tests {
     use super::*;
     #[test]
     fn normalize_host() {
-        assert_eq!(
-            hostname("BANEGASN.DEV.:443").as_deref(),
-            Some("example.com")
-        );
+        assert_eq!(hostname("EXAMPLE.COM.:443").as_deref(), Some("example.com"));
         assert!(hostname("user@example.com").is_none());
         assert!(hostname("evil/path").is_none());
     }

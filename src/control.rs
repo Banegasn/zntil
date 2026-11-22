@@ -74,7 +74,13 @@ struct Store {
     history: Vec<Snapshot>,
 }
 
+pub struct RuntimeRule {
+    pub rule: crate::rules::Rule,
+    pub key: usize,
+    pub rate_route: Option<Route>,
+}
 pub struct Entry {
+    pub rules: Vec<RuntimeRule>,
     pub key: usize,
     pub id: String,
     pub route: Route,
@@ -95,6 +101,7 @@ pub struct Event {
     pub status: u16,
     pub outcome: &'static str,
     pub reason: &'static str,
+    pub rule_id: Option<String>,
     pub latency_ms: u64,
 }
 #[derive(Clone, Serialize)]
@@ -122,6 +129,7 @@ pub struct Control {
     store: Mutex<Store>,
     next_key: AtomicUsize,
     auth: Option<Auth>,
+    devices: Option<Arc<crate::device::DeviceAuth>>,
     file: Option<PathBuf>,
     activity: Mutex<Activity>,
 }
@@ -201,6 +209,13 @@ impl Control {
             base: base.clone(),
             store: Mutex::new(store),
             next_key: AtomicUsize::new(1),
+            devices: admin
+                .as_ref()
+                .map(|key| {
+                    crate::device::DeviceAuth::new(base.admin_data_dir.as_deref().unwrap(), key)
+                        .map(Arc::new)
+                })
+                .transpose()?,
             auth: admin.map(|key| Auth {
                 key,
                 sessions: Mutex::new(HashMap::new()),
@@ -330,6 +345,27 @@ impl Control {
                     dns: tokio::sync::Mutex::new(None),
                     origin_token: secret(&route.origin_token_env)
                         .map_err(|_| bad("Invalid origin token variable."))?,
+                    rules: route
+                        .rules
+                        .iter()
+                        .filter(|r| r.enabled)
+                        .map(|r| {
+                            let rate_route = if r.action == crate::rules::Action::RateLimit {
+                                let mut policy = route.clone();
+                                policy.rules = Vec::new();
+                                policy.requests_per_second = r.requests_per_second.unwrap();
+                                policy.burst = r.burst.unwrap();
+                                Some(policy)
+                            } else {
+                                None
+                            };
+                            RuntimeRule {
+                                rule: r.clone(),
+                                key: self.next_key.fetch_add(1, Ordering::Relaxed),
+                                rate_route,
+                            }
+                        })
+                        .collect(),
                     route,
                 })
             };
@@ -628,6 +664,59 @@ impl Control {
             .await;
         }
         let auth = self.auth.as_ref().unwrap();
+        if path == "/_zntil/admin/device/start" && method == http::Method::POST {
+            let peer = session
+                .client_addr()
+                .and_then(|a| a.as_inet())
+                .map(|a| a.ip());
+            let ip =
+                peer.and_then(|p| crate::client_ip(p, &session.req_header().headers, &self.base));
+            if ip.is_none_or(|ip| !login_attempt(auth, ip)) {
+                return api_error(
+                    session,
+                    ApiError(429, "Too many CLI sign-in attempts.".into()),
+                )
+                .await;
+            }
+            let value = match read_json(session, 4096).await {
+                Ok(v) => v,
+                Err(e) => return api_error(session, e).await,
+            };
+            let origin = session
+                .req_header()
+                .headers
+                .get("origin")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            return match self.devices.as_ref().unwrap().start(
+                value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Zntil CLI"),
+                value.get("write").and_then(Value::as_bool).unwrap_or(false),
+                origin,
+            ) {
+                Ok(v) => json_response(session, 200, v, None).await,
+                Err(e) => api_error(session, e).await,
+            };
+        }
+        if path == "/_zntil/admin/device/poll" && method == http::Method::POST {
+            let value = match read_json(session, 4096).await {
+                Ok(v) => v,
+                Err(e) => return api_error(session, e).await,
+            };
+            let code = value
+                .get("device_code")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let devices = self.devices.as_ref().unwrap().clone();
+            return match tokio::task::spawn_blocking(move || devices.poll(&code)).await {
+                Ok(Ok((status, v))) => json_response(session, status, v, None).await,
+                Ok(Err(e)) => api_error(session, e).await,
+                Err(_) => api_error(session, internal()).await,
+            };
+        }
         if path == "/_zntil/admin/login" && method == http::Method::POST {
             let peer = session
                 .client_addr()
@@ -691,12 +780,95 @@ impl Control {
             );
             return json_response(session, 200, json!({"authenticated":true}), Some(&cookie)).await;
         }
-        if !authorized(auth, session) {
+        let browser_admin = authorized(auth, session);
+        let cli_token = session
+            .req_header()
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(str::to_owned);
+        let cli_access = cli_token
+            .as_deref()
+            .and_then(|t| self.devices.as_ref().unwrap().access(t));
+        if !browser_admin && cli_access.is_none() {
             return json_response(
                 session,
                 401,
                 json!({"error":"Sign in to the management console."}),
                 None,
+            )
+            .await;
+        }
+        if path == "/_zntil/admin/tokens/revoke-self" && method == http::Method::POST {
+            let devices = self.devices.as_ref().unwrap().clone();
+            let token = cli_token.unwrap_or_default();
+            return match tokio::task::spawn_blocking(move || devices.revoke_self(&token)).await {
+                Ok(Ok(v)) => json_response(session, 200, v, None).await,
+                Ok(Err(e)) => api_error(session, e).await,
+                Err(_) => api_error(session, internal()).await,
+            };
+        }
+        if path == "/_zntil/admin/devices"
+            || path == "/_zntil/admin/device/approve"
+            || path.starts_with("/_zntil/admin/tokens")
+        {
+            if !browser_admin {
+                return api_error(
+                    session,
+                    ApiError(
+                        403,
+                        "Only a console administrator can approve or revoke other CLI credentials."
+                            .into(),
+                    ),
+                )
+                .await;
+            }
+            let devices = self.devices.as_ref().unwrap().clone();
+            if method == http::Method::GET && path == "/_zntil/admin/devices" {
+                return json_response(session, 200, devices.pending(), None).await;
+            }
+            if method == http::Method::GET && path == "/_zntil/admin/tokens" {
+                return json_response(session, 200, devices.list(), None).await;
+            }
+            let value = match read_json(session, 4096).await {
+                Ok(v) => v,
+                Err(e) => return api_error(session, e).await,
+            };
+            if path == "/_zntil/admin/device/approve" && method == http::Method::POST {
+                return match devices.approve(
+                    value.get("user_code").and_then(Value::as_str).unwrap_or(""),
+                    value
+                        .get("approve")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                ) {
+                    Ok(v) => json_response(session, 200, v, None).await,
+                    Err(e) => api_error(session, e).await,
+                };
+            }
+            if path == "/_zntil/admin/tokens/revoke" && method == http::Method::POST {
+                let id = value
+                    .get("token_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                return match tokio::task::spawn_blocking(move || devices.revoke(&id)).await {
+                    Ok(Ok(v)) => json_response(session, 200, v, None).await,
+                    Ok(Err(e)) => api_error(session, e).await,
+                    Err(_) => api_error(session, internal()).await,
+                };
+            }
+            return api_error(session, ApiError(404, "Not found.".into())).await;
+        }
+        if !browser_admin
+            && cli_access == Some(false)
+            && method != http::Method::GET
+            && path != "/_zntil/admin/validate"
+        {
+            return api_error(
+                session,
+                ApiError(403, "This CLI credential is read-only.".into()),
             )
             .await;
         }

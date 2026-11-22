@@ -117,6 +117,85 @@ class Management(unittest.TestCase):
         self.assertEqual(get("/_zntil/admin/state","a.test")[0],404)
         self.assertEqual(get("/missing","console.test")[0],404)
         self.assertEqual(get("/","a.test")[0],200)
+    def bearer(self,token,path="state",method="GET",value=None):
+        c=http.client.HTTPConnection("127.0.0.1",self.p.port,timeout=5)
+        headers={"Host":"a.test","Origin":"http://a.test","Authorization":"Bearer "+token}
+        if value is not None:headers["Content-Type"]="application/json"
+        c.request(method,"/_zntil/admin/"+path,body=json.dumps(value) if value is not None else None,headers=headers)
+        r=c.getresponse();raw=r.read();out=(r.status,json.loads(raw) if raw else {});c.close();return out
+    def device_token(self,write=False):
+        code,start,_=self.api("device/start","POST",{"name":"integration agent","write":write},cookie=False)
+        self.assertEqual(code,200);self.assertNotIn("device_code",start["verification_uri"])
+        self.assertEqual(self.api("device/approve","POST",{"user_code":start["user_code"],"approve":True})[0],200)
+        code,result,_=self.api("device/poll","POST",{"device_code":start["device_code"]},cookie=False)
+        self.assertEqual(code,200);return start,result
+    def test_cli_device_flow_scopes_revocation_and_single_use(self):
+        self.login();start,token=self.device_token(False);secret=token["access_token"]
+        self.assertEqual(self.bearer(secret)[0],200)
+        desired=self.desired(self.state());self.assertEqual(self.bearer(secret,"config","PUT",desired)[0],403)
+        self.assertEqual(self.bearer(secret,"validate","POST",desired)[0],200)
+        self.assertEqual(self.bearer(secret,"device/approve","POST",{"user_code":start["user_code"],"approve":True})[0],403)
+        self.assertEqual(self.bearer(secret,"tokens")[0],403)
+        self.assertEqual(self.api("device/poll","POST",{"device_code":start["device_code"]},cookie=False)[0],400)
+        self.assertNotIn(secret,(self.data/"credentials.json").read_text())
+        self.assertNotIn(secret,json.dumps(self.api("tokens")[1]))
+        self.assertEqual(self.api("tokens/revoke","POST",{"token_id":token["token_id"]})[0],200)
+        self.assertEqual(self.bearer(secret)[0],401)
+    def test_cli_credential_survives_restart_and_can_revoke_itself(self):
+        self.login();_,token=self.device_token(True);secret=token["access_token"]
+        self.p.close();self.p=self.start_proxy();self.cookie=None
+        self.assertEqual(self.bearer(secret)[0],200)
+        state=self.bearer(secret)[1];self.assertEqual(self.bearer(secret,"config","PUT",self.desired(state))[0],200)
+        self.assertEqual(self.bearer(secret,"tokens/revoke-self","POST",{})[0],200)
+        self.assertEqual(self.bearer(secret)[0],401)
+    def test_master_key_rotation_durably_revokes_cli_credentials(self):
+        self.login();_,token=self.device_token(False);original=self.key
+        self.p.close();os.environ["RUSTGATE_TEST_ADMIN"]="rotated-management-key-"+"y"*32;self.key=os.environ["RUSTGATE_TEST_ADMIN"]
+        self.p=self.start_proxy();self.assertEqual(self.bearer(token["access_token"])[0],401)
+        self.p.close();os.environ["RUSTGATE_TEST_ADMIN"]=original;self.key=original;self.p=self.start_proxy()
+        self.assertEqual(self.bearer(token["access_token"])[0],401)
+    def test_cli_pending_denial_and_origin_checks(self):
+        self.login();code,start,_=self.api("device/start","POST",{"name":"pending"},cookie=False);self.assertEqual(code,200)
+        self.assertEqual(self.api("device/poll","POST",{"device_code":start["device_code"]},cookie=False)[0],202)
+        self.assertEqual(self.api("device/poll","POST",{"device_code":start["device_code"]},cookie=False)[0],429)
+        self.assertEqual(self.api("device/approve","POST",{"user_code":start["user_code"],"approve":False},origin="https://evil.test")[0],403)
+        self.assertEqual(self.api("device/approve","POST",{"user_code":start["user_code"],"approve":False})[0],200)
+        time.sleep(2.05)
+        self.assertEqual(self.api("device/poll","POST",{"device_code":start["device_code"]},cookie=False)[0],403)
+    def test_custom_rule_domain_path_method_and_cidr(self):
+        self.login();desired=self.desired(self.state());r=desired["proxies"][0]["route"];r["hosts"].append("c.test")
+        r["rules"]=[{"id":"private","name":"Private POSTs","domains":["c.test"],"path":"/private","path_match":"prefix","methods":["POST"],"client_cidrs":["127.0.0.0/8"],"action":"block"}]
+        self.assertEqual(self.api("config","PUT",desired)[0],200)
+        self.assertEqual(self.p.request("/private",host="a.test",method="POST")[0],200)
+        self.assertEqual(self.p.request("/private",host="c.test")[0],200)
+        self.assertEqual(self.p.request("/private/users",host="c.test",method="POST")[0],403)
+        self.assertEqual(self.p.request("/%70rivate",host="c.test",method="POST")[0],403)
+        self.assertEqual(self.p.request("/privately",host="c.test",method="POST")[0],200)
+        self.assertTrue(any(e["reason"]=="custom_rule_block" for e in self.state()["events"]))
+    def test_custom_rate_rule_and_rollback(self):
+        self.login();desired=self.desired(self.state());desired["proxies"][0]["route"]["rules"]=[{"id":"limited","name":"Limited","path":"/limited","path_match":"exact","action":"rate_limit","requests_per_second":0.1,"burst":1}]
+        self.assertEqual(self.api("config","PUT",desired)[0],200)
+        self.assertEqual(self.p.request("/limited")[0],200);self.assertEqual(self.p.request("/limited")[0],429)
+        self.assertEqual(self.p.request("/limited/child")[0],200);self.assertEqual(self.p.request("/limited",host="b.test")[0],200)
+        self.assertEqual(self.api("rollback","POST",{"revision":1,"current_revision":2})[0],200)
+        self.assertEqual(self.p.request("/limited")[0],200)
+    def test_custom_rules_observe_mode_and_disable(self):
+        self.p.close();self.p=Proxy(self.directory,[o.server_port for o in self.origins],mode="observe",extra=f'admin_token_env="RUSTGATE_TEST_ADMIN"\nadmin_data_dir="{self.data}"');self.addCleanup(self.p.close)
+        self.login();desired=self.desired(self.state())
+        desired["proxies"][0]["route"]["rules"]=[{"id":"all","name":"Observe all","path":"/","action":"block"},{"id":"slow","name":"Observe rate","path":"/","action":"rate_limit","requests_per_second":0.1,"burst":1}]
+        self.assertEqual(self.api("config","PUT",desired)[0],200)
+        self.assertEqual(self.p.request('/custom')[0],200);self.assertEqual(self.p.request('/custom')[0],200)
+        state=self.state();self.assertEqual(state["counters"]["observed"],2)
+        desired=self.desired(state)
+        for rule in desired["proxies"][0]["route"]["rules"]:rule["enabled"]=False
+        self.assertEqual(self.api("config","PUT",desired)[0],200)
+        self.assertEqual(self.p.request('/custom')[0],200);self.assertEqual(self.state()["counters"]["observed"],2)
+    def test_invalid_custom_rules_do_not_apply(self):
+        self.login();desired=self.desired(self.state());route=desired["proxies"][0]["route"]
+        route["rules"]=[{"id":"x","name":"bad domain","domains":["other.test"],"path":"/","action":"block"}]
+        self.assertEqual(self.api("config","PUT",desired)[0],400);self.assertEqual(self.state()["revision"],1)
+        route["rules"][0]["domains"]=[];route["rules"][0]["action"]="rate_limit"
+        self.assertEqual(self.api("validate","POST",desired)[0],400)
     def test_console_assets_and_cache_policy(self):
         for path in ["/_zntil/console/","/_zntil/console/app.js","/_zntil/console/styles.css"]:
             c=http.client.HTTPConnection("127.0.0.1",self.p.port,timeout=5);c.request("GET",path,headers={"Host":"a.test"})

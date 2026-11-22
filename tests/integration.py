@@ -299,10 +299,11 @@ class Integration(unittest.TestCase):
     def test_trusted_proxy_requires_single_valid_client_ip(self):
         p = self.proxy(extra='trusted_proxies = ["127.0.0.1/32"]')
         self.assertEqual(p.request()[0],400)
-        code, body = p.request(headers={"X-Real-IP":"192.0.2.1"})
+        code, body = p.request(headers={"X-Real-IP":"192.0.2.1", "X-Forwarded-Proto":"https"})
         self.assertEqual(code,200)
         headers = {k.lower():v for k,v in json.loads(body)["headers"].items()}
         self.assertEqual(headers["x-real-ip"],"192.0.2.1")
+        self.assertEqual(headers["x-forwarded-proto"],"https")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

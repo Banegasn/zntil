@@ -1,7 +1,9 @@
 mod config;
 mod control;
 mod crawlers;
+mod device;
 mod guard;
+mod rules;
 mod waf;
 
 use async_trait::async_trait;
@@ -108,6 +110,7 @@ struct Ctx {
     reserved: usize,
     budget: Option<Arc<AtomicUsize>>,
     control_plane: bool,
+    rule_id: Option<String>,
     blocked: bool,
     observed: bool,
     reason: &'static str,
@@ -128,6 +131,7 @@ impl Default for Ctx {
             reserved: 0,
             budget: None,
             control_plane: false,
+            rule_id: None,
             blocked: false,
             observed: false,
             reason: "passed",
@@ -393,7 +397,7 @@ impl ProxyHttp for Gateway {
             .iter()
             .any(|n| n.contains(&peer));
         ctx.scheme = if session.digest().is_some_and(|d| d.ssl_digest.is_some())
-            || (trusted
+            || ((trusted || self.config.trust_railway_edge)
                 && req
                     .headers
                     .get("x-forwarded-proto")
@@ -445,6 +449,38 @@ impl ProxyHttp for Gateway {
         if !global_ok {
             return self.reject(session, 503, ctx).await;
         }
+        for rule in &entry.rules {
+            if !rule.rule.matches(&ctx.host, &path, req.method.as_str(), ip) {
+                continue;
+            }
+            let status = if let Some(policy) = &rule.rate_route {
+                match self
+                    .guard
+                    .check(rule.key, ip, policy, &self.config, false, false, 0.0, now)
+                {
+                    Decision::Capacity => Some(503),
+                    Decision::Rate | Decision::Ban => Some(429),
+                    Decision::Allow => None,
+                }
+            } else {
+                Some(403)
+            };
+            if let Some(status) = status {
+                ctx.rule_id = Some(rule.rule.id.clone());
+                ctx.reason = if status == 403 {
+                    "custom_rule_block"
+                } else {
+                    "custom_rule_rate"
+                };
+                if self.config.mode == Mode::Enforce || status == 503 {
+                    return self.reject(session, status, ctx).await;
+                }
+                if !ctx.observed {
+                    self.counters.observed.fetch_add(1, Ordering::Relaxed);
+                    ctx.observed = true;
+                }
+            }
+        }
         if reason.is_none() && req.uri.query().is_some_and(waf::parameters) {
             reason = Some("injection_query");
         }
@@ -474,8 +510,10 @@ impl ProxyHttp for Gateway {
             if self.config.mode == Mode::Enforce {
                 return self.reject(session, status, ctx).await;
             }
-            self.counters.observed.fetch_add(1, Ordering::Relaxed);
-            ctx.observed = true;
+            if !ctx.observed {
+                self.counters.observed.fetch_add(1, Ordering::Relaxed);
+                ctx.observed = true;
+            }
         }
         if self
             .active
@@ -671,8 +709,10 @@ impl ProxyHttp for Gateway {
                             "body inspection rejected request",
                         );
                     }
-                    self.counters.observed.fetch_add(1, Ordering::Relaxed);
-                    ctx.observed = true;
+                    if !ctx.observed {
+                        self.counters.observed.fetch_add(1, Ordering::Relaxed);
+                        ctx.observed = true;
+                    }
                     ctx.reason = "body_injection";
                 }
                 *body = Some(ctx.buffer.split().freeze());
@@ -733,6 +773,7 @@ impl ProxyHttp for Gateway {
                 "allowed"
             },
             reason: ctx.reason,
+            rule_id: ctx.rule_id.clone(),
             latency_ms: ctx.started.elapsed().as_millis().min(u64::MAX as u128) as u64,
         });
         if let Some(e) = e {
